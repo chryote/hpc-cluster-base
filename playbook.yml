@@ -1,0 +1,123 @@
+---
+# 1. Base Configuration
+- name: Install foundational config to all nodes
+  hosts: all
+  become: yes
+  tasks:
+    - name: Update apt cache and install system baselines
+      apt:
+        name: ['chrony', 'curl', 'ca-certificates', 'gnupg', 'lvm2']
+        state: present
+        update_cache: yes
+    
+    - name: Ensure chrony time service is active for Slurm
+      systemd:
+        name: chrony
+        state: started
+        enabled: yes
+    
+    - name: Map local cluster resolution in /etc/hosts
+      blockinfile:
+        path: /etc/hosts
+        block: |
+          192.168.56.10 master
+          192.168.56.11 worker1
+          192.168.56.12 worker2
+          192.168.56.20 storage
+
+# 2. Sllurm & Munge setup (master and workers)
+- name: Configure Slurm engine cluster pipeline
+  hosts: slurm_cluster
+  become: yes
+  tasks:
+    - name: Install Munge security validation layer and core Slurm binaries
+      apt:
+        name: ['munge', 'slurmctld', 'slurmd']
+        state: present
+
+    - name: Deploy identical shared verification key for Munge auth
+      copy:
+        content: "VagrantSlurmSandboxSecretKeyMunge1234567890"
+        dest: /etc/munge/munge.key
+        owner: munge
+        group: munge
+        mode: '0400'
+
+    - name: Restart Munge daemon to load verification key
+      systemd:
+        name: munge
+        state: restarted
+        enabled: yes
+
+    - name: Provision standard Slurm control config layout
+      copy:
+        dest: /etc/slurm/slurm.config
+        content: |
+          ClusterName=vbox_cluster
+          SlurmctldHost=master(192.168.56.10)
+          AuthType=auth/munge
+          CryptoType=crypto/munge
+          SlurmUser=slurm
+          SlurmdUser=root
+          SlurmctldPidFile=/var/run/slurmctld.pid
+          SlurmdPidFile=/var/run/slurm.pid
+          StateSaveLocation=/var/spool/slurm/ctld
+          #Virtual Hardware alloc params matched to Vagrantfile
+          NodeName=worker1 NodeAddr=192.168.56.11 CPUs=2 state=UNKNOWN
+          NodeName=worker2 NodeAddr=192.168.56.12 CPUs=2 state=UNKNOWN
+          PartitionName=debug Nodes=worker1,worker2 Default=YES MaxTime=INFINITE state=Update
+        owner: slurm
+        group: slurm
+        mode: '0644'
+    
+    - name: Ensure correct spool state subdirectory directory structural limits
+      file:
+        path: /var/spool/slurm/slurmctld
+        state: directory
+        owner: slurm
+        group: slurm
+- name: Boot master control scheduler service
+  hosts: master
+  become: yes
+  tasks:
+    - name: Start Slurm controller management daemon
+      systemd:
+        name: slurmctld
+        state: restarted
+        enabled: yes
+
+- name: Boot compute cluster nodes
+  hosts: workers
+  become: yes
+  tasks:
+    - name: Start slurm worker engine agent daemon
+      systemd:
+        name: slurmd
+        state: restarted
+        enabled: yes
+
+# 3. Docker and Containerized ceph setup
+- name: Deploy Storage Node and Container Runtime
+  hosts: storage_nodes
+  become: yes
+  tasks:
+  - name: Install cephadm depedencies and container runtimes
+    apt:
+      name: ['cephadm', 'podman-docker']
+      state: present
+  
+  - name: Bootstrap single-node Ceph storage container engine
+    command: >
+      cephadm bootstrap
+      --mon-ip 192.168.56.20
+      --skip-dashboard
+      --single-host-defaults
+    args:
+      creates: /etc/ceph/ceph.conf
+  
+  - name: Pause briefly to allow ceph orchestrator loops
+    pause:
+      seconds: 15
+
+  - name: Instruct Ceph cluster engnie to claim the secondary raw disk asset
+    command: cephadm shell -- ceph orch apply osd --all-available-devices

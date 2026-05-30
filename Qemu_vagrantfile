@@ -1,0 +1,49 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  # Use the official Debian 12 Cloud Image (qcow2 under the hood)
+  config.vm.box = "debian/bookworm64"
+
+  # Global Provider Configuration for QEMU/KVM via libvirt
+  config.vm.provider :libvirt do |lv|
+    lv.driver = "kvm"
+    lv.management_network_name = "vagrant-libvirt"
+  end
+
+  # 1. Slurm Master Node
+  config.vm.define "master" do |master|
+    master.vm.hostname = "master"
+    master.vm.network "private_network", ip: "192.168.56.10"
+    master.vm.provider :libvirt do |lv|
+      lv.memory = 2048
+      lv.cpus = 2
+    end
+  end
+
+  # 2 & 3. Slurm Worker Nodes (Using a loop)
+  (1..2).each do |i|
+    config.vm.define "worker#{i}" do |worker|
+      worker.vm.hostname = "worker#{i}"
+      worker.vm.network "private_network", ip: "192.168.56.1#{i}"
+      worker.vm.provider :libvirt do |lv|
+        worker.vm.provider :libvirt do |lv|
+          lv.memory = 2048
+          lv.cpus = 2
+        end
+      end
+    end
+  end
+
+  # 4. Ceph Storage Node (with secondary raw storage disk)
+  config.vm.define "storage" do |storage|
+    storage.vm.hostname = "storage"
+    storage.vm.network "private_network", ip: "192.168.56.20"
+    storage.vm.provider :libvirt do |lv|
+      lv.memory = 3072 # Ceph services prefer a bit more RAM
+      lv.cpus = 2
+      # Attach a 20GB raw disk device for the Ceph OSD volume
+      lv.storage :file, :size => '20G', :device => 'vdb', :type => 'raw'
+    end
+  end
+end

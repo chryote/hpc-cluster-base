@@ -1,1 +1,6 @@
 /.vagrant/
+ceph-osd-disk.vdi
+/slurm_shared/
+main.go
+slurm.conf
+submit_job_local.sh

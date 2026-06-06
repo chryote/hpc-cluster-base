@@ -25,14 +25,14 @@
           192.168.56.12 worker2
           192.168.56.20 storage
 
-# 2. Sllurm & Munge setup (master and workers)
+# 2. Slurm & Munge setup (master and workers)
 - name: Configure Slurm engine cluster pipeline
   hosts: slurm_cluster
   become: yes
   tasks:
     - name: Install Munge security validation layer and core Slurm binaries
       apt:
-        name: ['munge', 'slurmctld', 'slurmd']
+        name: ['munge', 'slurmctld', 'slurmd', 'ceph-common']
         state: present
 
     - name: Deploy identical shared verification key for Munge auth
@@ -51,7 +51,7 @@
 
     - name: Provision standard Slurm control config layout
       copy:
-        dest: /etc/slurm/slurm.config
+        dest: /etc/slurm/slurm.conf
         content: |
           ClusterName=vbox_cluster
           SlurmctldHost=master(192.168.56.10)
@@ -60,12 +60,11 @@
           SlurmUser=slurm
           SlurmdUser=root
           SlurmctldPidFile=/var/run/slurmctld.pid
-          SlurmdPidFile=/var/run/slurm.pid
+          SlurmdPidFile=/var/run/slurmd.pid
           StateSaveLocation=/var/spool/slurm/ctld
-          #Virtual Hardware alloc params matched to Vagrantfile
-          NodeName=worker1 NodeAddr=192.168.56.11 CPUs=2 state=UNKNOWN
-          NodeName=worker2 NodeAddr=192.168.56.12 CPUs=2 state=UNKNOWN
-          PartitionName=debug Nodes=worker1,worker2 Default=YES MaxTime=INFINITE state=Update
+          NodeName=worker1 NodeAddr=192.168.56.11 CPUs=2 RealMemory=900 State=UNKNOWN
+          NodeName=worker2 NodeAddr=192.168.56.12 CPUs=2 RealMemory=900 State=UNKNOWN
+          PartitionName=debug Nodes=worker1,worker2 Default=YES MaxTime=INFINITE State=UP
         owner: slurm
         group: slurm
         mode: '0644'
@@ -76,6 +75,51 @@
         state: directory
         owner: slurm
         group: slurm
+
+- name: Bind Shared Parallel Storage Array Infrastructure
+  hosts: all
+  become: yes
+  tasks:
+    - name: Pull administrative security keyring from the storage host
+      fetch:
+        src: /etc/ceph/ceph.client.admin.keyring
+        dest: /tmp/ceph.client.admin.keyring
+        flat: yes
+      when: inventory_hostname in groups['storage_nodes']
+
+    - name: Create native ceph destination configuration directories
+      file:
+        path: /etc/ceph
+        state: directory
+        mode: '0755'
+      when: inventory_hostname in groups['slurm_cluster']
+
+    - name: Extract naked base64 token and save it cleanly as a pure secret
+      copy:
+        # This regex magic finds the "key = XYZ" line and grabs ONLY the token string
+        content: "{{ lookup('file', '/tmp/ceph.client.admin.keyring') | regex_search('key\\s*=\\s*(\\S+)', '\\1') | first }}\n"
+        dest: /etc/ceph/ceph.client.admin.secret
+        owner: root
+        group: root
+        mode: '0600'
+      when: inventory_hostname in groups['slurm_cluster']
+
+    - name: Create local shared target mount-point tracking directory
+      file:
+        path: /mnt/slurm_shared
+        state: directory
+        mode: '0777'
+      when: inventory_hostname in groups['slurm_cluster']
+
+    - name: Mount distributed CephFS partition volume via Kernel driver
+      mount:
+        path: /mnt/slurm_shared
+        src: "192.168.56.20:/"
+        fstype: ceph
+        opts: "name=admin,secretfile=/etc/ceph/ceph.client.admin.secret,noatime,_netdev"
+        state: mounted
+      when: inventory_hostname in groups['slurm_cluster']
+
 - name: Boot master control scheduler service
   hosts: master
   become: yes

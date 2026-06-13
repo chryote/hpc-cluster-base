@@ -1,0 +1,3 @@
+1. Dynamic Chunking: Right now, my chunk math splits the file strictly in 2 because I have 2 workers. Can I make the script read $SLURM_NTASKS dynamically so that if it's scale with Vagrantfile to 4 or 8 workers, the bash math automatically scales the byte boundaries?
+
+2. An accounting layer: Setting up Slurm DBD (slurmdbd) with a MariaDB database to log past job histories cleanly so I can track execution times and benchmark my Go utility's scaling performance!

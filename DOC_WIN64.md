@@ -60,7 +60,12 @@ Because the host execution environment is Windows 11 Home edition, traditional Q
 3. 
 **Hypervisor Collision Precaution:** Disable Windows *Core Isolation / Memory Integrity* or heavy features that attempt to aggressively claim nested virtualization locks exclusively.
 
-
+## If ansible yet baked to vagrant
+sudo apt update
+sudo apt install -y pipx python3-venv
+pipx install --include-deps ansible
+pipx ensurepath
+source ~/.bashrc
 
 ---
 
@@ -86,6 +91,8 @@ Run `vagrant ssh master` to step into the orchestrator dashboard. Then execute t
 ```bash
 # Prepare a protected local directory path
 mkdir -p /home/vagrant/.ssh/cluster_keys
+
+sudo chown -R vagrant:vagrant /home/vagrant/.ssh
 
 # Extract the individual node private authentication tokens natively
 cp /vagrant/.vagrant/machines/master/virtualbox/private_key /home/vagrant/.ssh/cluster_keys/master_key
@@ -114,9 +121,14 @@ Ensure all four items respond with a clean green verification message before pro
 ### 4. Execute the Main Configuration Pipeline
 
 ```bash
+export ANSIBLE_HOST_KEY_CHECKING=False
+
+export ANSIBLE_CONFIG=/vagrant/ansible.cfg
 ansible-playbook -i inventory.ini playbook.yml
 
 ```
+
+```USE submit_local_job_parallel.sh```
 
 ---
 
@@ -156,6 +168,29 @@ To instantly check if the full distributed scheduler stack and data storage node
 * 
 **Check Slurm Cluster Nodes:** `sinfo` 
 
+* 
+**Check ansible ping-pong:** `ansible -i inventory.ini all -m ping`
+
+* 
+**Check storage node remotely:** `ansible -i inventory.ini storage -m command -a "cephadm shell -- ceph status" --become`
 
 * 
 **Verify Ceph Array Storage Integrity:** `sudo cephadm shell -- ceph status` 
+
+* 
+**/mnt/slurm_shared sanitation checking pass** `echo "Cluster Storage Verification Token: Pass" | sudo tee /mnt/slurm_shared/test_cluster.txt`
+
+then `ansible -i inventory.ini slurm_cluster -m command -a "cat /mnt/slurm_shared/test_cluster.txt"`
+
+it should output 
+`master | CHANGED | rc=0 >>`
+`Cluster Storage Verification Token: Pass`
+
+`worker1 | CHANGED | rc=0 >>`
+`Cluster Storage Verification Token: Pass`
+
+`worker2 | CHANGED | rc=0 >>`
+`Cluster Storage Verification Token: Pass`
+
+Do change ownership!
+```ansible -i inventory.ini slurm_cluster -m file -a "path=/mnt/slurm_shared owner=vagrant group=vagrant recurse=yes" --become```

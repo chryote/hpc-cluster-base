@@ -76,6 +76,59 @@
         owner: slurm
         group: slurm
 
+- name: Boot master control scheduler service
+  hosts: master
+  become: yes
+  tasks:
+    - name: Start Slurm controller management daemon
+      systemd:
+        name: slurmctld
+        state: restarted
+        enabled: yes
+
+- name: Boot compute cluster nodes
+  hosts: workers
+  become: yes
+  tasks:
+    - name: Start slurm worker engine agent daemon
+      systemd:
+        name: slurmd
+        state: restarted
+        enabled: yes
+
+# 3. Docker and Containerized ceph setup
+- name: Deploy Storage Node and Container Runtime
+  hosts: storage_nodes
+  become: yes
+  tasks:
+  - name: Install cephadm depedencies and container runtimes
+    apt:
+      name: ['cephadm', 'podman-docker']
+      state: present
+  
+  - name: Bootstrap single-node Ceph storage container engine
+    command: >
+      cephadm bootstrap
+      --mon-ip 192.168.56.20
+      --skip-dashboard
+      --single-host-defaults
+    args:
+      creates: /etc/ceph/ceph.conf
+
+  - name: Create CephFS Volume (This automatically spawns MDS daemons)
+    command: >
+      cephadm shell 
+      -- ceph fs volume create slurm_shared
+    become: yes
+    when: inventory_hostname in groups['storage_nodes']
+
+  - name: Wait for MDS daemons to come online safely
+    pause:
+        seconds: 30
+
+  - name: Instruct Ceph cluster engine to claim the secondary raw disk asset
+    command: cephadm shell -- ceph orch apply osd --all-available-devices
+
 - name: Bind Shared Parallel Storage Array Infrastructure
   hosts: all
   become: yes
@@ -119,49 +172,3 @@
         opts: "name=admin,secretfile=/etc/ceph/ceph.client.admin.secret,noatime,_netdev"
         state: mounted
       when: inventory_hostname in groups['slurm_cluster']
-
-- name: Boot master control scheduler service
-  hosts: master
-  become: yes
-  tasks:
-    - name: Start Slurm controller management daemon
-      systemd:
-        name: slurmctld
-        state: restarted
-        enabled: yes
-
-- name: Boot compute cluster nodes
-  hosts: workers
-  become: yes
-  tasks:
-    - name: Start slurm worker engine agent daemon
-      systemd:
-        name: slurmd
-        state: restarted
-        enabled: yes
-
-# 3. Docker and Containerized ceph setup
-- name: Deploy Storage Node and Container Runtime
-  hosts: storage_nodes
-  become: yes
-  tasks:
-  - name: Install cephadm depedencies and container runtimes
-    apt:
-      name: ['cephadm', 'podman-docker']
-      state: present
-  
-  - name: Bootstrap single-node Ceph storage container engine
-    command: >
-      cephadm bootstrap
-      --mon-ip 192.168.56.20
-      --skip-dashboard
-      --single-host-defaults
-    args:
-      creates: /etc/ceph/ceph.conf
-  
-  - name: Pause briefly to allow ceph orchestrator loops
-    pause:
-      seconds: 15
-
-  - name: Instruct Ceph cluster engnie to claim the secondary raw disk asset
-    command: cephadm shell -- ceph orch apply osd --all-available-devices

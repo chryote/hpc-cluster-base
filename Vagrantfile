@@ -8,7 +8,8 @@ Vagrant.configure("2") do |config|
     # 1. Slurm master node
     config.vm.define "master" do |master|
         master.vm.hostname = "master"
-        master.vm.network "private_network", ip: "192.168.56.10"
+        # TUNED: Added virtio nictype to prevent soft lockups during intense IO compilation loops
+        master.vm.network "private_network", ip: "192.168.56.10", nictype: "virtio"
         master.vm.provider "virtualbox" do |vb|
             vb.memory = 1024
             vb.cpus = 2
@@ -20,7 +21,8 @@ Vagrant.configure("2") do |config|
     (1..2).each do |i|
         config.vm.define "worker#{i}" do |worker|
             worker.vm.hostname = "worker#{i}"
-            worker.vm.network "private_network", ip: "192.168.56.1#{i}"
+            # TUNED: Added virtio nictype to ensure distributed storage streams don't choke ksoftirqd
+            worker.vm.network "private_network", ip: "192.168.56.1#{i}", nictype: "virtio"
             worker.vm.provider "virtualbox" do |vb|
                 vb.memory = 1024
                 vb.cpus = 2
@@ -32,8 +34,10 @@ Vagrant.configure("2") do |config|
     # 3. Ceph storage node (secondary raw storage disk)
     config.vm.define "storage" do |storage|
         storage.vm.hostname = "storage"
-        storage.vm.network "private_network", ip: "192.168.56.20"
+        # TUNED: Added virtio nictype to maximize block device and network synchronization performance
+        storage.vm.network "private_network", ip: "192.168.56.20", nictype: "virtio"
         storage.vm.provider "virtualbox" do |vb|
+            storage.vm.boot_timeout = 600
             vb.memory = 4096
             vb.cpus = 4
             vb.name = "ceph-storage"
